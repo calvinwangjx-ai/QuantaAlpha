@@ -9,8 +9,9 @@ instruments = D.instruments()
 fields = ["$open", "$close", "$high", "$low", "$volume"]  # , "$amount", "$turn", "$pettm", "$pbmrq"
 data = D.features(instruments, fields, freq="day").swaplevel().sort_index().loc["2015-01-01":].sort_index()
 
-# Calculate return
-data["$return"] = data.groupby(level=0)["$close"].pct_change().fillna(0)
+# Calculate return per instrument. The index is (datetime, instrument) after swaplevel,
+# so grouping by level 0 would compute a cross-sectional change across stocks instead.
+data["$return"] = data.groupby(level="instrument")["$close"].pct_change().fillna(0)
 
 print(data)
 
@@ -29,7 +30,7 @@ data = (
     .sort_index()
 )
 
-# Calculate return
-data["$return"] = data.groupby(level=0)["$close"].pct_change().fillna(0)
+# Calculate return per instrument (see note above)
+data["$return"] = data.groupby(level="instrument")["$close"].pct_change().fillna(0)
 print(data)
 data.to_hdf("./daily_pv_debug.h5", key="data")

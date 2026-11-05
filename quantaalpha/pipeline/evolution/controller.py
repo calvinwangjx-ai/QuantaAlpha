@@ -118,7 +118,9 @@ class EvolutionController:
         # Track trajectories to mutate in current mutation round
         self._mutation_targets: list[StrategyTrajectory] = []
         self._mutation_idx = 0  # Current index in mutation targets
-    
+        # Tasks that failed (skipped rather than retried)
+        self._failed_tasks: list[dict[str, Any]] = []
+
     def get_current_state(self) -> dict[str, Any]:
         """Get current evolution state."""
         return {
@@ -298,7 +300,8 @@ class EvolutionController:
         advance the controller to the next phase.
         
         Args:
-            completed_tasks: List of completed task dictionaries
+            completed_tasks: List of attempted task dictionaries (successful and
+                failed); failed tasks must be included so the phase still advances.
         """
         if not completed_tasks:
             return
@@ -404,6 +407,13 @@ class EvolutionController:
     
     def _get_mutation_task(self) -> Optional[dict[str, Any]]:
         """Get next mutation round task."""
+        # Mutation and crossover hand off to each other (incrementing the round)
+        # when a phase has no work, e.g. when every earlier task failed. Check the
+        # limit here too, otherwise that hand-off recurses without bound.
+        if self._current_round >= self.config.max_rounds:
+            logger.info(f"Evolution complete: reached max rounds ({self.config.max_rounds})")
+            return None
+
         # If mutation is disabled, skip to crossover or stay in mutation loop
         if not self.config.mutation_enabled:
             if self.config.crossover_enabled:
@@ -637,6 +647,11 @@ class EvolutionController:
     
     def _get_crossover_task(self) -> Optional[dict[str, Any]]:
         """Get next crossover round task."""
+        # See _get_mutation_task: guard against unbounded mutation<->crossover hand-off.
+        if self._current_round >= self.config.max_rounds:
+            logger.info(f"Evolution complete: reached max rounds ({self.config.max_rounds})")
+            return None
+
         # If crossover is disabled, skip to mutation or stay in crossover loop
         if not self.config.crossover_enabled:
             if self.config.mutation_enabled:
@@ -706,7 +721,29 @@ class EvolutionController:
         
         elif phase == RoundPhase.CROSSOVER:
             logger.info(f"Crossover round complete (group {direction_id})")
-    
+
+    def report_task_failed(self, task: dict[str, Any], error: str = ""):
+        """
+        Report that a task failed, so it is not scheduled again.
+
+        Mutation/crossover tasks already advance their index when handed out,
+        but an original direction is only marked done on completion. Without
+        this, a persistently failing original task (e.g. a setup error) would
+        be re-issued forever.
+        """
+        self._failed_tasks.append({
+            "phase": task["phase"].value,
+            "direction_id": task["direction_id"],
+            "round_idx": task.get("round_idx"),
+            "error": error,
+        })
+        if task["phase"] == RoundPhase.ORIGINAL:
+            self._directions_completed.add(task["direction_id"])
+        logger.warning(
+            f"Task failed and will be skipped: phase={task['phase'].value}, "
+            f"round={task.get('round_idx')}, direction={task['direction_id']}"
+        )
+
     def create_trajectory_from_loop_result(
         self,
         task: dict[str, Any],
@@ -886,6 +923,7 @@ class EvolutionController:
             "active_branch_count": self._active_branch_count,
             "mutation_idx": self._mutation_idx,
             "mutation_target_ids": [t.trajectory_id for t in self._mutation_targets],
+            "failed_tasks": self._failed_tasks,
             "config": {
                 "num_directions": self.config.num_directions,
                 "max_rounds": self.config.max_rounds,

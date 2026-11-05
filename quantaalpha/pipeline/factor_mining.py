@@ -440,7 +440,11 @@ def run_evolution_loop(
                 log_root=log_root,
             )
             
-            completed_tasks = []
+            succeeded_idx = {r["task_idx"] for r in results if r["success"]}
+            for idx, task in enumerate(tasks):
+                if idx not in succeeded_idx:
+                    controller.report_task_failed(task, error="parallel task failed")
+
             for result in results:
                 if result["success"]:
                     task = result["task"]
@@ -452,10 +456,12 @@ def run_evolution_loop(
                         feedback=traj_data.get("feedback"),
                     )
                     controller.report_task_complete(task, trajectory)
-                    completed_tasks.append(task)
                     logger.info(f"Trajectory done: {trajectory.trajectory_id}, RankIC={trajectory.get_primary_metric()}")
 
-            controller.advance_phase_after_parallel_completion(completed_tasks)
+            # Advance using all attempted tasks: if only successes were passed,
+            # a phase where every task failed would never advance and the same
+            # tasks would be re-spawned forever.
+            controller.advance_phase_after_parallel_completion(tasks)
 
     else:
         while not controller.is_complete():
@@ -493,6 +499,7 @@ def run_evolution_loop(
                 logger.error(f"Task failed: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
+                controller.report_task_failed(task, error=str(e))
                 continue
 
     state_path = Path(log_root) / "evolution_state.json"

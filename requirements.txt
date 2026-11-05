@@ -40,6 +40,7 @@ azure-ai-formrecognizer    # Azure Document Intelligence
 # Factor storage
 # -----------------------------------------------------------------------------
 tables                     # HDF5 table storage (PyTables)
+pyarrow>=10,<18            # Parquet factor files (pyarrow>=18 requires numpy>=2)
 
 # -----------------------------------------------------------------------------
 # Infrastructure
